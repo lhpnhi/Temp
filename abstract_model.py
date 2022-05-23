@@ -343,20 +343,20 @@ class TabModel(BaseEstimator):
 
         return res_explain, res_masks
 
-    #def load_weights_from_unsupervised(self, unsupervised_model):
-    #    update_state_dict = copy.deepcopy(self.network.state_dict())
-    #    for param, weights in unsupervised_model.network.state_dict().items():
-    #        if param.startswith("encoder"):
-    #            # Convert encoder's layers name to match
-    #            new_param = "tabnet." + param
+    def load_weights_from_unsupervised(self, unsupervised_model):
+        update_state_dict = copy.deepcopy(self.network.state_dict())
+        for param, weights in unsupervised_model.network.state_dict().items():
+            if param.startswith("encoder"):
+                # Convert encoder's layers name to match
+                new_param = "tabnet." + param
     
-    #       else:
-    #            new_param = param
-    #        if self.network.state_dict().get(new_param) is not None:
-    #            # update only common layers
-    #            update_state_dict[new_param] = weights
-#
- #       self.network.load_state_dict(update_state_dict)
+            else:
+                new_param = param
+            if self.network.state_dict().get(new_param) is not None:
+                # update only common layers
+                update_state_dict[new_param] = weights
+
+        self.network.load_state_dict(update_state_dict)
 
     def load_class_attrs(self, class_attrs):
         for attr_name, attr_value in class_attrs.items():
