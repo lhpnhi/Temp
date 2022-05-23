@@ -1,22 +1,27 @@
 import torch
-import torch.nn as nn
+from torch.nn import Linear, BatchNorm1d, ReLU
 import numpy as np
+#import sparsemax
 from torch.autograd import Function
 
 
-def initialize_non_glu(module, inp_dim, out_dim): #Khởi tạo Glorot
-    gain_value = np.sqrt((inp_dim + out_dim)/np.sqrt(4*inp_dim))
-    nn.init.xavier_normal_(module.weight, gain = gain_value)
+
+def initialize_non_glu(module, inp_dim, out_dim):
+    gain_value = np.sqrt((inp_dim + out_dim) / np.sqrt(4 * inp_dim))
+    torch.nn.init.xavier_normal_(module.weight, gain=gain_value)
+    # torch.nn.init.zeros_(module.bias)
     return
 
-def initialize_glu(module, inp_dim, out_dim): #Khởi tạo Glorot
-    gain_value = np.sqrt((inp_dim + out_dim)/np.sqrt(inp_dim))
-    nn.init.xavier_normal_(module.weight, gain = gain_value)
-    return 
+
+def initialize_glu(module, inp_dim, out_dim):
+    gain_value = np.sqrt((inp_dim + out_dim) / np.sqrt(inp_dim))
+    torch.nn.init.xavier_normal_(module.weight, gain=gain_value)
+    # torch.nn.init.zeros_(module.bias)
+    return
 
 def make_ix_like(input, dim = 0):
     d = input.size(dim)
-    rho = torch.arrange(1, d + 1, device = input.device, dtype = input.dtype)
+    rho = torch.arange(1, d + 1, device = input.device, dtype = input.dtype)
     view = [1] * input.dim()
     view[0] = -1
     return rho.view(view).transpose(0, dim)
@@ -59,7 +64,7 @@ class SparsemaxFunction(Function): #sparsemax activation
 sparsemax = SparsemaxFunction.apply
 
 
-class Sparsemax(nn.Module):
+class Sparsemax(torch.nn.Module):
 
     def __init__(self, dim=-1):
         self.dim = dim
@@ -69,33 +74,35 @@ class Sparsemax(nn.Module):
         return sparsemax(input, self.dim)
 
 class GBN(torch.nn.Module):
-    def __init__(self, inp_dim, vbs = 128, momentum = 0.01):
-        super().__init__()
+    """
+    Ghost Batch Normalization
+    https://arxiv.org/abs/1705.08741
+    """
+
+    def __init__(self, inp_dim, vbs=128, momentum=0.01):
+        super(GBN, self).__init__()
 
         self.inp_dim = inp_dim
         self.vbs = vbs
-        self.bn = nn.BatchNorm1d(self.inp_dim, momentum = momentum)
+        self.bn = BatchNorm1d(self.inp_dim, momentum=momentum)
 
-    def foward(self, x):
-        if x.shape[0] <= self.vbs: #Kích thước lô ảo lớn hơn lô đầu vào nên không thỏa điều kiện để sử dụng GBN
-            return self.bn(x)
-        else:
-            chunks = x.chunk(int(np.ceil(x.shape[0] / self.vbs)), 0) #Chia lô đầu vào thành các lô nhỏ (lô ảo)
-            res = [self.bn(y) for y in chunks] #áp dụng batch normalization cho từng lô ảo
+    def forward(self, x):
+        chunks = x.chunk(int(np.ceil(x.shape[0] / self.vbs)), 0)
+        res = [self.bn(x_) for x_ in chunks]
 
-            return torch.cat(res, dim = 0)
+        return torch.cat(res, dim=0)
 
 class GLU_Layer(torch.nn.Module):
     def __init__(
-        self, inp_dim, out_dim, fc = None, vbs = 128, momentum=0.02
+        self, inp_dim, out_dim, fc=None, vbs=128, momentum=0.02
     ):
-        super().__init__()
+        super(GLU_Layer, self).__init__()
 
         self.out_dim = out_dim
         if fc:
             self.fc = fc
         else:
-            self.fc = nn.Linear(inp_dim, 2 * out_dim, bias=False)
+            self.fc = Linear(inp_dim, 2 * out_dim, bias=False)
         initialize_glu(self.fc, inp_dim, 2 * out_dim)
 
         self.bn = GBN(
@@ -120,7 +127,7 @@ class GLU_Block(torch.nn.Module):
         n_glu=2,
         first=False,
         shared_layers=None,
-        vbs = 128,
+        vbs=128,
         momentum=0.02,
     ):
         super(GLU_Block, self).__init__()
@@ -157,16 +164,18 @@ class AttentiveTransformer(torch.nn.Module):
         out_dim,
         vbs=128,
         momentum=0.02,
+        #mask_type="sparsemax",
     ):
         """
         Initialize an attention transformer.
+
         Parameters
         ----------
-        input_dim : int
+        inp_dim : int
             Input size
-        output_dim : int
+        out_dim : int
             Output_size
-        virtual_batch_size : int
+        vbs : int
             Batch size for Ghost Batch Normalization
         momentum : float
             Float value between 0 and 1 which will be used for momentum in batch norm
@@ -174,12 +183,22 @@ class AttentiveTransformer(torch.nn.Module):
             Either "sparsemax" or "entmax" : this is the masking function to use
         """
         super(AttentiveTransformer, self).__init__()
-        self.fc = nn.Linear(inp_dim, out_dim, bias=False)
+        self.fc = Linear(inp_dim, out_dim, bias=False)
         initialize_non_glu(self.fc, inp_dim, out_dim)
         self.bn = GBN(
-            out_dim, vbs = vbs, momentum = momentum
+            out_dim, vbs=vbs, momentum=momentum
         )
-        self.selector = Sparsemax(dim = -1)
+
+        #if mask_type == "sparsemax":
+            # Sparsemax
+        self.selector = Sparsemax(dim=-1)
+        #elif mask_type == "entmax":
+            # Entmax
+        #    self.selector = sparsemax.Entmax15(dim=-1)
+        #else:
+        #    raise NotImplementedError(
+        #        "Please choose either sparsemax" + "or entmax as masktype"
+        #    )
 
     def forward(self, priors, processed_feat):
         x = self.fc(processed_feat)
@@ -195,23 +214,24 @@ class FeatTransformer(torch.nn.Module):
         out_dim,
         shared_layers,
         n_glu_independent,
-        vbs = 128,
-        momentum = 0.02,
+        vbs=128,
+        momentum=0.02,
     ):
         super(FeatTransformer, self).__init__()
         """
         Initialize a feature transformer.
+
         Parameters
         ----------
-        input_dim : int
+        inp_dim : int
             Input size
-        output_dim : int
+        out_dim : int
             Output_size
         shared_layers : torch.nn.ModuleList
             The shared block that should be common to every step
         n_glu_independent : int
             Number of independent GLU layers
-        virtual_batch_size : int
+        vbs : int
             Batch size for Ghost Batch Normalization within GLU block(s)
         momentum : float
             Float value between 0 and 1 which will be used for momentum in batch norm
@@ -243,9 +263,9 @@ class FeatTransformer(torch.nn.Module):
             # no independent layers
             self.specifics = torch.nn.Identity()
         else:
-            spec_input_dim = inp_dim if is_first else out_dim
+            spec_inp_dim = inp_dim if is_first else out_dim
             self.specifics = GLU_Block(
-                spec_input_dim, out_dim, first=is_first, **params
+                spec_inp_dim, out_dim, first=is_first, **params
             )
 
     def forward(self, x):
@@ -253,7 +273,7 @@ class FeatTransformer(torch.nn.Module):
         x = self.specifics(x)
         return x
 
-class Encoder(torch.nn.Module):
+class TabNetEncoder(torch.nn.Module):
     def __init__(
         self,
         inp_dim,
@@ -267,14 +287,16 @@ class Encoder(torch.nn.Module):
         epsilon=1e-15,
         vbs=128,
         momentum=0.02,
+       #mask_type="sparsemax",
     ):
         """
         Defines main part of the TabNet network without the embedding layers.
+
         Parameters
         ----------
-        input_dim : int
+        inp_dim : int
             Number of features
-        output_dim : int or list of int for multi task classification
+        out_dim : int or list of int for multi task classification
             Dimension of network output
             examples : one for regression, 2 for binary classification etc...
         n_d : int
@@ -285,20 +307,20 @@ class Encoder(torch.nn.Module):
             Number of successive steps in the network (usually between 3 and 10)
         gamma : float
             Float above 1, scaling factor for attention updates (usually between 1.0 to 2.0)
-        n_independent : int
+        n_ind : int
             Number of independent GLU layer in each GLU block (default 2)
         n_shared : int
             Number of independent GLU layer in each GLU block (default 2)
         epsilon : float
             Avoid log(0), this should be kept very low
-        virtual_batch_size : int
+        vbs : int
             Batch size for Ghost Batch Normalization
         momentum : float
             Float value between 0 and 1 which will be used for momentum in all batch norm
         mask_type : str
             Either "sparsemax" or "entmax" : this is the masking function to use
         """
-        super(Encoder, self).__init__()
+        super(TabNetEncoder, self).__init__()
         self.inp_dim = inp_dim
         self.out_dim = out_dim
         self.is_multi_task = isinstance(out_dim, list)
@@ -310,18 +332,19 @@ class Encoder(torch.nn.Module):
         self.n_ind = n_ind
         self.n_shared = n_shared
         self.vbs = vbs
-        self.initial_bn = nn.BatchNorm1d(self.inp_dim, momentum=0.01)
+        #self.mask_type = mask_type
+        self.initial_bn = BatchNorm1d(self.inp_dim, momentum=0.01)
 
         if self.n_shared > 0:
             shared_feat_transform = torch.nn.ModuleList()
             for i in range(self.n_shared):
                 if i == 0:
                     shared_feat_transform.append(
-                        nn.Linear(self.inp_dim, 2 * (n_d + n_a), bias=False)
+                        Linear(self.inp_dim, 2 * (n_d + n_a), bias=False)
                     )
                 else:
                     shared_feat_transform.append(
-                        nn.Linear(n_d + n_a, 2 * (n_d + n_a), bias=False)
+                        Linear(n_d + n_a, 2 * (n_d + n_a), bias=False)
                     )
 
         else:
@@ -353,6 +376,7 @@ class Encoder(torch.nn.Module):
                 self.inp_dim,
                 vbs=self.vbs,
                 momentum=momentum,
+                #mask_type=self.mask_type,
             )
             self.feat_transformers.append(transformer)
             self.att_transformers.append(attention)
@@ -377,7 +401,7 @@ class Encoder(torch.nn.Module):
             # output
             masked_x = torch.mul(M, x)
             out = self.feat_transformers[step](masked_x)
-            d = nn.ReLU()(out[:, : self.n_d])
+            d = ReLU()(out[:, : self.n_d])
             steps_output.append(d)
             # update attention
             att = out[:, self.n_d :]
@@ -401,7 +425,7 @@ class Encoder(torch.nn.Module):
             # output
             masked_x = torch.mul(M, x)
             out = self.feat_transformers[step](masked_x)
-            d = nn.ReLU()(out[:, : self.n_d])
+            d = ReLU()(out[:, : self.n_d])
             # explain
             step_importance = torch.sum(d, dim=1)
             M_explain += torch.mul(M, step_importance.unsqueeze(dim=1))
@@ -415,27 +439,28 @@ class EmbeddingGenerator(torch.nn.Module):
     Classical embeddings generator
     """
 
-    def __init__(self, inp_dim, cat_dims, cat_idxs, cat_emb_dim):#hàm khởi tạo
+    def __init__(self, inp_dim, cat_dims, cat_idxs, cat_emb_dim):
         """This is an embedding module for an entire set of features
+
         Parameters
         ----------
-        input_dim : int #số đặc trưng được đưa vào 
+        inp_dim : int
             Number of features coming as input (number of columns)
-        cat_dims : list of int #số categorical có trong bảng#  Number of categories in each categorical column, số lượng categorical có trong một đặc trưng
-            Number of modalities for each categorial features #số lượng phương thức cho mỗi categorical
+        cat_dims : list of int
+            Number of modalities for each categorial features
             If the list is empty, no embeddings will be done
         cat_idxs : list of int
-            Positional index for each categorical features in inputs #chỉ mục của tính năng, vị trí của tính năng
-        cat_emb_dim : int or list of int #số lượng một feature được chia tành bao nhiều sau emdeding
+            Positional index for each categorical features in inputs
+        cat_emb_dim : int or list of int
             Embedding dimension for each categorical features
             If int, the same embedding dimension will be used for all categorical features
         """
         super(EmbeddingGenerator, self).__init__()
-        if cat_dims == [] and cat_idxs == []:#nếu mà rỗng thì thôi ha, không embedding là không có, là không có đặc trưng categorical
+        if cat_dims == [] and cat_idxs == []:
             self.skip_embedding = True
             self.post_embed_dim = inp_dim
             return
-        elif (cat_dims == []) ^ (cat_idxs == []):#giá trị cat_dims có thì cat_indexs phải có mang trong mình giá trị
+        elif (cat_dims == []) ^ (cat_idxs == []):
             if cat_dims == []:
                 msg = "If cat_idxs is non-empty, cat_dims must be defined as a list of same length."
             else:
@@ -446,63 +471,106 @@ class EmbeddingGenerator(torch.nn.Module):
             raise ValueError(msg)
 
         self.skip_embedding = False
-        if isinstance(cat_emb_dim, int):# kiểm trả cat_emb_dim là số hay là list danh sách, nếu là số 
-            self.cat_emb_dims = [cat_emb_dim] * len(cat_idxs) #thì tạo dánh sách cat_em_dims
+        if isinstance(cat_emb_dim, int):
+            self.cat_emb_dims = [cat_emb_dim] * len(cat_idxs)
         else:
             self.cat_emb_dims = cat_emb_dim
 
-        # check that all embeddings are provided kiểm tra số lượng cat_em_dím và cat_dims có bằng nhau không, đây là số lượng categorical và số lượng tham số chuyển từ categorical 
+        # check that all embeddings are provided
         if len(self.cat_emb_dims) != len(cat_dims):
             msg = f"""cat_emb_dim and cat_dims must be lists of same length, got {len(self.cat_emb_dims)}
                       and {len(cat_dims)}"""
             raise ValueError(msg)
-        self.post_embed_dim = int(#số đặc trưng đầu vào
-            inp_dim + np.sum(self.cat_emb_dims) - len(self.cat_emb_dims)#lấy số đặc trưng ban đầu trừ đi số categorical + số đặc trưng được tạo từ 
+        self.post_embed_dim = int(
+            inp_dim + np.sum(self.cat_emb_dims) - len(self.cat_emb_dims)
         )
 
-        self.embeddings = torch.nn.ModuleList()#tạo ra một dánh tensor rỗng
+        self.embeddings = torch.nn.ModuleList()
 
         # Sort dims by cat_idx
-        sorted_idxs = np.argsort(cat_idxs)#sắp xếp giá trị từ bé đến lớn trong cat_inds, sorted_indx là indx của cat_indx
-        cat_dims = [cat_dims[i] for i in sorted_idxs]# giá trị cat_dims sẽ được lưu theo từ đặc trưng đầu tiên đến đặc trưng cuối cùng, là theo thứ tự, chứ ban đầu nó lộn xộn
-        self.cat_emb_dims = [self.cat_emb_dims[i] for i in sorted_idxs]# giá trị cat_em_dim cũng sẽ được sắp xếp
+        sorted_idxs = np.argsort(cat_idxs)
+        cat_dims = [cat_dims[i] for i in sorted_idxs]
+        self.cat_emb_dims = [self.cat_emb_dims[i] for i in sorted_idxs]
 
-        for cat_dim, emb_dim in zip(cat_dims, self.cat_emb_dims):# chơi theo cặp biết ha
-            self.embeddings.append(torch.nn.Embedding(cat_dim, emb_dim))# thêm tensor embedding có sẵn trong pytorch
+        for cat_dim, emb_dim in zip(cat_dims, self.cat_emb_dims):
+            self.embeddings.append(torch.nn.Embedding(cat_dim, emb_dim))
 
         # record continuous indices
-        self.continuous_idx = torch.ones(inp_dim, dtype=torch.bool)# input_dim là số đặc trưng ban đầu không có embedding, tất cả được gán 1
-        self.continuous_idx[cat_idxs] = 0# các tính năng categorical ban đầu mang giá trị 0
+        self.continuous_idx = torch.ones(inp_dim, dtype=torch.bool)
+        self.continuous_idx[cat_idxs] = 0
 
     def forward(self, x):
         """
         Apply embeddings to inputs
-        Inputs should be (batch_size, input_dim)
+        Inputs should be (batch_size, inp_dim)
         Outputs will be of size (batch_size, self.post_embed_dim)
         """
-        if self.skip_embedding:#nếu skip_embedding mà true thì ko thực hiện đồng nghĩa là categorical nào cả
+        if self.skip_embedding:
             # no embeddings required
             return x
 
-        cols = []#tạo một cột rỗng
-        cat_feat_counter = 0# index của self.emdeddings
-        for feat_init_idx, is_continuous in enumerate(self.continuous_idx):#gép cặp từ 1..n cho feat_init_idx, is_continous là cái giá trị 1, 0 được gán ở trên
+        cols = []
+        cat_feat_counter = 0
+        for feat_init_idx, is_continuous in enumerate(self.continuous_idx):
             # Enumerate through continuous idx boolean mask to apply embeddings
-            if is_continuous:#nếu bằng 1 là các giá trị trị feature số, ban đầu
-                cols.append(x[:, feat_init_idx].float().view(-1, 1))# vẫn giữ nguyên giá trị
+            if is_continuous:
+                cols.append(x[:, feat_init_idx].float().view(-1, 1))
             else:
                 cols.append(
-                    self.embeddings[cat_feat_counter](x[:, feat_init_idx].long())#thực hiện emdedding so với các đặng trưng categorical
+                    self.embeddings[cat_feat_counter](x[:, feat_init_idx].long())
                 )
-                cat_feat_counter += 1#thêm một để chọn giá trị tiếp theo trong self.embedding
+                cat_feat_counter += 1
         # concat
-        post_embeddings = torch.cat(cols, dim=1)#ghép kết quả của thực hiện hai cái trên
+        post_embeddings = torch.cat(cols, dim=1)
         return post_embeddings
 
 class TabNetNoEmbeddings(torch.nn.Module):
-    def __init__(self, inp_dim, out_dim, n_d = 8, n_a = 8, n_steps = 3, 
-                gamma = 1.3, n_ind = 2, n_shared = 2, epsilon=1e-15, vbs = 128, momentum = 0.02,):
+    def __init__(
+        self,
+        inp_dim,
+        out_dim,
+        n_d=8,
+        n_a=8,
+        n_steps=3,
+        gamma=1.3,
+        n_ind=2,
+        n_shared=2,
+        epsilon=1e-15,
+        vbs=128,
+        momentum=0.02,
+        #mask_type="sparsemax",
+    ):
+        """
+        Defines main part of the TabNet network without the embedding layers.
 
+        Parameters
+        ----------
+        inp_dim : int
+            Number of features
+        out_dim : int or list of int for multi task classification
+            Dimension of network output
+            examples : one for regression, 2 for binary classification etc...
+        n_d : int
+            Dimension of the prediction  layer (usually between 4 and 64)
+        n_a : int
+            Dimension of the attention  layer (usually between 4 and 64)
+        n_steps : int
+            Number of successive steps in the network (usually between 3 and 10)
+        gamma : float
+            Float above 1, scaling factor for attention updates (usually between 1.0 to 2.0)
+        n_ind : int
+            Number of independent GLU layer in each GLU block (default 2)
+        n_shared : int
+            Number of independent GLU layer in each GLU block (default 2)
+        epsilon : float
+            Avoid log(0), this should be kept very low
+        vbs : int
+            Batch size for Ghost Batch Normalization
+        momentum : float
+            Float value between 0 and 1 which will be used for momentum in all batch norm
+        mask_type : str
+            Either "sparsemax" or "entmax" : this is the masking function to use
+        """
         super(TabNetNoEmbeddings, self).__init__()
         self.inp_dim = inp_dim
         self.out_dim = out_dim
@@ -515,29 +583,32 @@ class TabNetNoEmbeddings(torch.nn.Module):
         self.n_ind = n_ind
         self.n_shared = n_shared
         self.vbs = vbs
-        self.initial_bn = nn.BatchNorm1d(self.inp_dim, momentum=0.01)
-        self.encoder = Encoder(
+        #self.mask_type = mask_type
+        self.initial_bn = BatchNorm1d(self.inp_dim, momentum=0.01)
+
+        self.encoder = TabNetEncoder(
             inp_dim=inp_dim,
             out_dim=out_dim,
             n_d=n_d,
             n_a=n_a,
-            n_shared=n_shared,
-            n_ind=n_ind,
             n_steps=n_steps,
             gamma=gamma,
+            n_ind=n_ind,
+            n_shared=n_shared,
             epsilon=epsilon,
             vbs=vbs,
-            momentum = momentum,
+            momentum=momentum,
+            #mask_type=mask_type,
         )
 
         if self.is_multi_task:
             self.multi_task_mappings = torch.nn.ModuleList()
             for task_dim in out_dim:
-                task_mapping = nn.Linear(n_d, task_dim, bias=False)
+                task_mapping = Linear(n_d, task_dim, bias=False)
                 initialize_non_glu(task_mapping, n_d, task_dim)
                 self.multi_task_mappings.append(task_mapping)
         else:
-            self.final_mapping = nn.Linear(n_d, out_dim, bias=False)
+            self.final_mapping = Linear(n_d, out_dim, bias=False)
             initialize_non_glu(self.final_mapping, n_d, out_dim)
 
     def forward(self, x):
@@ -551,15 +622,71 @@ class TabNetNoEmbeddings(torch.nn.Module):
             for task_mapping in self.multi_task_mappings:
                 out.append(task_mapping(res))
         else:
-            out = self.final_mapping(res) #Qua một tầng FC để có được output cuối cùng 
+            out = self.final_mapping(res)
         return out, M_loss
 
     def forward_masks(self, x):
         return self.encoder.forward_masks(x)
 
+
 class TabNet(torch.nn.Module):
-    def __init__(self, inp_dim, out_dim, n_d = 8, n_a = 8, n_steps = 3, gamma = 1.3,
-                cat_idxs = [], cat_dims = [], cat_emb_dim = 1, n_ind = 2, n_shared = 2, epsilon=1e-15, vbs = 128, momentum=0.02,):
+    def __init__(
+        self,
+        inp_dim,
+        out_dim,
+        n_d=8,
+        n_a=8,
+        n_steps=3,
+        gamma=1.3,
+        cat_idxs=[],
+        cat_dims=[],
+        cat_emb_dim=1,
+        n_ind=2,
+        n_shared=2,
+        epsilon=1e-15,
+        vbs=128,
+        momentum=0.02,
+        #mask_type="sparsemax",
+    ):
+        """
+        Defines TabNet network
+
+        Parameters
+        ----------
+        inp_dim : int
+            Initial number of features
+        out_dim : int
+            Dimension of network output
+            examples : one for regression, 2 for binary classification etc...
+        n_d : int
+            Dimension of the prediction  layer (usually between 4 and 64)
+        n_a : int
+            Dimension of the attention  layer (usually between 4 and 64)
+        n_steps : int
+            Number of successive steps in the network (usually between 3 and 10)
+        gamma : float
+            Float above 1, scaling factor for attention updates (usually between 1.0 to 2.0)
+        cat_idxs : list of int
+            Index of each categorical column in the dataset
+        cat_dims : list of int
+            Number of categories in each categorical column
+        cat_emb_dim : int or list of int
+            Size of the embedding of categorical features
+            if int, all categorical features will have same embedding size
+            if list of int, every corresponding feature will have specific size
+        n_ind : int
+            Number of independent GLU layer in each GLU block (default 2)
+        n_shared : int
+            Number of independent GLU layer in each GLU block (default 2)
+        epsilon : float
+            Avoid log(0), this should be kept very low
+        vbs : int
+            Batch size for Ghost Batch Normalization
+        momentum : float
+            Float value between 0 and 1 which will be used for momentum in all batch norm
+        mask_type : str
+            Either "sparsemax" or "entmax" : this is the masking function to use
+        """
         super(TabNet, self).__init__()
         self.cat_idxs = cat_idxs or []
         self.cat_dims = cat_dims or []
@@ -574,11 +701,12 @@ class TabNet(torch.nn.Module):
         self.epsilon = epsilon
         self.n_ind = n_ind
         self.n_shared = n_shared
+        #self.mask_type = mask_type
 
         if self.n_steps <= 0:
             raise ValueError("n_steps should be a positive integer.")
         if self.n_ind == 0 and self.n_shared == 0:
-            raise ValueError("n_shared and n_independent can't be both zero.")
+            raise ValueError("n_shared and n_ind can't be both zero.")
 
         self.vbs = vbs
         self.embedder = EmbeddingGenerator(inp_dim, cat_dims, cat_idxs, cat_emb_dim)
@@ -595,6 +723,7 @@ class TabNet(torch.nn.Module):
             epsilon,
             vbs,
             momentum,
+            #mask_type,
         )
 
     def forward(self, x):
@@ -605,68 +734,5 @@ class TabNet(torch.nn.Module):
         x = self.embedder(x)
         return self.tabnet.forward_masks(x)
 
-"""class TabNet(torch.nn.Module):
-    def __init__(#hàm khởi tạo
-        self,
-        input_dim,#số lượng tính năng ban đầu
-        output_dim,#kích thước đầu ra
-        n_d=8,#kích thước của lớp dự đoán
-        n_a=8,#kích thước của lớp attention
-        n_steps=3,# số bước liên kiết trong mạng
-        gamma=1.3,#số thực trên 1.3m, hệ số tỷ lệ đề cập sự chú ý 
-        cat_idxs=[], #index của các cột categorical
-        cat_dims=[], #số categorical có trong mỗi cột categorical 
-        cat_emb_dim=1,#sau khi các cột categorical được emdedding thì mỗi cột 
-        n_independent=2,#số lớp GLU độc lập trong khối GLU
-        n_shared=2,#số lớp GLU độc lập trong một khối GLU
-        epsilon=1e-15,#tránh log(0), điều này phải giữ ở mức thấp nhất
-        virtual_batch_size=128,#batch size của ghost batch no
-        momentum=0.02, #sử dụng cho động lượng
-        mask_type="sparsemax", #sparemax hay là entmax
-    ):
-        super(TabNet, self).__init__()#khởi tạo vào self
-        self.cat_idxs = cat_idxs or []
-        self.cat_dims = cat_dims or []
-        self.cat_emb_dim = cat_emb_dim
 
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.n_d = n_d
-        self.n_a = n_a
-        self.n_steps = n_steps
-        self.gamma = gamma
-        self.epsilon = epsilon
-        self.n_independent = n_independent
-        self.n_shared = n_shared
-        self.mask_type = mask_type
 
-        if self.n_steps <= 0:#kiểm tra điều kiện nếu n_step<0 thì coi ha
-            raise ValueError("n_steps should be a positive integer.")
-        if self.n_independent == 0 and self.n_shared == 0:
-            raise ValueError("n_shared and n_independent can't be both zero.")
-
-        self.virtual_batch_size = virtual_batch_size
-        self.embedder = EmbeddingGenerator(input_dim, cat_dims, cat_idxs, cat_emb_dim)#làm emdedding
-        self.post_embed_dim = self.embedder.post_embed_dim#số đặc trưng sau khi đã emdedding
-        self.tabnet = TabNetNoEmbeddings(#thực hiện noemdedding, tuy tên như thế chứ được làm hết emdding rồi
-            self.post_embed_dim,
-            output_dim,
-            n_d,
-            n_a,
-            n_steps,
-            gamma,
-            n_independent,
-            n_shared,
-            epsilon,
-            virtual_batch_size,
-            momentum,
-            mask_type,
-        )
-
-    def forward(self, x):
-        x = self.embedder(x)#thực hiện emdedding ạ
-        return self.tabnet(x)#thực hiện tabnet
-
-    def forward_masks(self, x):
-        x = self.embedder(x)#thực hiện emdedding
-        return self.tabnet.forward_masks(x)#xong trả ra dị đó """
