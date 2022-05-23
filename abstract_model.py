@@ -5,8 +5,8 @@ from torch.nn.utils import clip_grad_norm_
 import numpy as np
 from scipy.sparse import csc_matrix
 from abc import abstractmethod
-from Code import Tabnet_network
-from Code.utils import (
+import Tabnet_network
+from utils import (
     PredictDataset,
     create_explain_matrix,
     validate_eval_set,
@@ -16,13 +16,13 @@ from Code.utils import (
     check_input,
     check_warm_start
 )
-from .callbacks import (
+from callbacks import (
     CallbackContainer,
     History,
     EarlyStopping,
     LRSchedulerCallback,
 )
-from .metrics import MetricContainer, check_metrics
+from metrics import MetricContainer, check_metrics
 from sklearn.base import BaseEstimator
 
 from torch.utils.data import DataLoader

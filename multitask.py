@@ -1,9 +1,9 @@
 import torch
 import numpy as np
 from scipy.special import softmax
-from Code.utils import PredictDataset, filter_weights
-from Code.abstract_model import TabModel
-from Code.multiclass_utils import infer_multitask_output, check_output_dim
+from utils import PredictDataset, filter_weights
+from abstract_model import TabModel
+from multiclass_utils import infer_multitask_output, check_output_dim
 from torch.utils.data import DataLoader
 
 
