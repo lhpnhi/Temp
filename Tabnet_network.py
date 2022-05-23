@@ -68,7 +68,7 @@ class Sparsemax(nn.Module):
     def forward(self, input):
         return sparsemax(input, self.dim)
 
-class GBN(nn.Module):
+class GBN(torch.nn.Module):
     def __init__(self, inp_dim, vbs = 128, momentum = 0.01):
         super().__init__()
 
@@ -415,7 +415,7 @@ class EmbeddingGenerator(torch.nn.Module):
     Classical embeddings generator
     """
 
-    def __init__(self, input_dim, cat_dims, cat_idxs, cat_emb_dim):#hàm khởi tạo
+    def __init__(self, inp_dim, cat_dims, cat_idxs, cat_emb_dim):#hàm khởi tạo
         """This is an embedding module for an entire set of features
         Parameters
         ----------
@@ -433,7 +433,7 @@ class EmbeddingGenerator(torch.nn.Module):
         super(EmbeddingGenerator, self).__init__()
         if cat_dims == [] and cat_idxs == []:#nếu mà rỗng thì thôi ha, không embedding là không có, là không có đặc trưng categorical
             self.skip_embedding = True
-            self.post_embed_dim = input_dim
+            self.post_embed_dim = inp_dim
             return
         elif (cat_dims == []) ^ (cat_idxs == []):#giá trị cat_dims có thì cat_indexs phải có mang trong mình giá trị
             if cat_dims == []:
@@ -457,7 +457,7 @@ class EmbeddingGenerator(torch.nn.Module):
                       and {len(cat_dims)}"""
             raise ValueError(msg)
         self.post_embed_dim = int(#số đặc trưng đầu vào
-            input_dim + np.sum(self.cat_emb_dims) - len(self.cat_emb_dims)#lấy số đặc trưng ban đầu trừ đi số categorical + số đặc trưng được tạo từ 
+            inp_dim + np.sum(self.cat_emb_dims) - len(self.cat_emb_dims)#lấy số đặc trưng ban đầu trừ đi số categorical + số đặc trưng được tạo từ 
         )
 
         self.embeddings = torch.nn.ModuleList()#tạo ra một dánh tensor rỗng
@@ -471,7 +471,7 @@ class EmbeddingGenerator(torch.nn.Module):
             self.embeddings.append(torch.nn.Embedding(cat_dim, emb_dim))# thêm tensor embedding có sẵn trong pytorch
 
         # record continuous indices
-        self.continuous_idx = torch.ones(input_dim, dtype=torch.bool)# input_dim là số đặc trưng ban đầu không có embedding, tất cả được gán 1
+        self.continuous_idx = torch.ones(inp_dim, dtype=torch.bool)# input_dim là số đặc trưng ban đầu không có embedding, tất cả được gán 1
         self.continuous_idx[cat_idxs] = 0# các tính năng categorical ban đầu mang giá trị 0
 
     def forward(self, x):
@@ -499,7 +499,7 @@ class EmbeddingGenerator(torch.nn.Module):
         post_embeddings = torch.cat(cols, dim=1)#ghép kết quả của thực hiện hai cái trên
         return post_embeddings
 
-class TabNetNoEmbeddings(nn.Module):
+class TabNetNoEmbeddings(torch.nn.Module):
     def __init__(self, inp_dim, out_dim, n_d = 8, n_a = 8, n_steps = 3, 
                 gamma = 1.3, n_ind = 2, n_shared = 2, epsilon=1e-15, vbs = 128, momentum = 0.02,):
 
