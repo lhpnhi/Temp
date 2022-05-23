@@ -263,7 +263,7 @@ class Encoder(torch.nn.Module):
         n_a=8,
         n_steps=3,
         gamma=1.3,
-        n_independent=2,
+        n_ind=2,
         n_shared=2,
         epsilon=1e-15,
         vbs=128,
@@ -308,7 +308,7 @@ class Encoder(torch.nn.Module):
         self.n_steps = n_steps
         self.gamma = gamma
         self.epsilon = epsilon
-        self.n_independent = n_independent
+        self.n_ind = n_ind
         self.n_shared = n_shared
         self.vbs = vbs
         self.initial_bn = nn.BatchNorm1d(self.inp_dim, momentum=0.01)
@@ -332,7 +332,7 @@ class Encoder(torch.nn.Module):
             self.inp_dim,
             n_d + n_a,
             shared_feat_transform,
-            n_glu_independent=self.n_independent,
+            n_glu_independent=self.n_ind,
             vbs=self.vbs,
             momentum=momentum,
         )
@@ -345,7 +345,7 @@ class Encoder(torch.nn.Module):
                 self.inp_dim,
                 n_d + n_a,
                 shared_feat_transform,
-                n_glu_independent=self.n_independent,
+                n_glu_independent=self.n_ind,
                 vbs=self.vbs,
                 momentum=momentum,
             )
