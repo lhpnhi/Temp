@@ -563,7 +563,7 @@ class TabModel(BaseEstimator):
         else:
             wrn_msg = "No early stopping will be performed, last training weights will be used."
             warnings.warn(wrn_msg)
-
+        
         if self.scheduler_fn is not None:
             # Add LR Scheduler call_back
             is_batch_level = self.scheduler_params.pop("is_batch_level", False)
