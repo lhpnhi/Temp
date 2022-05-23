@@ -37,17 +37,15 @@ import copy
 
 @dataclass
 class TabModel(BaseEstimator):
-
+    """ Class for TabNet model."""
 
     n_d: int = 8
     n_a: int = 8
     n_steps: int = 3
     gamma: float = 1.3
-    cat_idxs: List[int] = field(default_factory = list) #Chỉ mục của mỗi cột categorical trong tập dữ liệu
-    cat_dims: List[int] = field(default_factory = list) #Số lượng danh mục trong mỗi cột categorical (ví dụ Giới tính: Nam, Nữ -> 2)
-    cat_emb_dim: int = 1 #Kích thước sau khi thực hiện embedding cột categorical 
-                         #Nếu là int thì tất cả các cột categorical đều có cùng kích thước
-                         #Nếu là 1 list thì mỗi cột categorical sẽ có kích thước cụ thể tương ứng
+    cat_idxs: List[int] = field(default_factory=list)
+    cat_dims: List[int] = field(default_factory=list)
+    cat_emb_dim: int = 1
     n_ind: int = 2
     n_shared: int = 2
     epsilon: float = 1e-15
@@ -57,35 +55,41 @@ class TabModel(BaseEstimator):
     clip_value: int = 1
     verbose: int = 1
     optimizer_fn: Any = torch.optim.Adam
-    optimizer_params: Dict = field(default_factory = lambda: dict(lr = 2e-2))
+    optimizer_params: Dict = field(default_factory=lambda: dict(lr=2e-2))
     scheduler_fn: Any = None
-    scheduler_params: Dict = field(default_factory = dict)
+    scheduler_params: Dict = field(default_factory=dict)
     #mask_type: str = "sparsemax"
     inp_dim: int = None
     out_dim: int = None
     device_name: str = "auto"
-    #n_shared_decoder: int = 1
-    #n_indep_decoder: int = 1
+    n_shared_decoder: int = 1
+    n_indep_decoder: int = 1
 
     def __post_init__(self):
         self.batch_size = 1024
         self.vbs = 128
         torch.manual_seed(self.seed)
+        # Defining device
         self.device = torch.device(define_device(self.device_name))
         if self.verbose != 0:
             warnings.warn(f"Device used : {self.device}")
-        
-        # create deep copies of mutable parameter
-        self.optimizer_fn = copy.deepcopy(self.optimizer_fn) #deepcopy là sao chép sâu, nghĩa là thay đổi xảy ra trên
-                                                             #đối tượng copy không ảnh hưởng đến đối tượng gốc
+
+        # create deep copies of mutable parameters
+        self.optimizer_fn = copy.deepcopy(self.optimizer_fn)
         self.scheduler_fn = copy.deepcopy(self.scheduler_fn)
+
     def __update__(self, **kwargs):
-        """ Update các siêu tham số, nếu chưa tồn tại thì tạo nó"""
+        """
+        Updates parameters.
+        If does not already exists, creates it.
+        Otherwise overwrite with warnings.
+        """
         update_list = [
             "cat_dims",
             "cat_emb_dim",
             "cat_idxs",
             "inp_dim",
+            #"mask_type",
             "n_a",
             "n_d",
             "n_ind",
@@ -96,35 +100,81 @@ class TabModel(BaseEstimator):
             if var_name in update_list:
                 try:
                     exec(f"global previous_val; previous_val = self.{var_name}")
-                    if previous_val != value:
-                        wrn_msg = f"Pretraining: {var_name} changed from {previous_val} to {value}"
+                    if previous_val != value:  # noqa
+                        wrn_msg = f"Pretraining: {var_name} changed from {previous_val} to {value}"  # noqa
                         warnings.warn(wrn_msg)
                         exec(f"self.{var_name} = value")
                 except AttributeError:
                     exec(f"self.{var_name} = value")
+
     def fit(
         self,
         X_train,
         y_train,
-        eval_set = None,
-        eval_name = None,
-        eval_metric = None,
-        loss_fn = None,
-        weights = 0,
-        max_epochs = 100,
-        patience = 10,
-        batch_size = 1024,
-        vbs = 128,
-        num_workers = 0,
-        drop_last = True,
-        callbacks = None,
-        pin_memory = True,
-        #from_unsupervised = None,
-        warm_start = False,
-        #augmentations = None,
+        eval_set=None,
+        eval_name=None,
+        eval_metric=None,
+        loss_fn=None,
+        weights=0,
+        max_epochs=100,
+        patience=10,
+        batch_size=1024,
+        vbs=128,
+        num_workers=0,
+        drop_last=True,
+        callbacks=None,
+        pin_memory=True,
+        from_unsupervised=None,
+        warm_start=False,
+        augmentations=None,
     ):
-        """Train một neural net được lưu trữ trong self.network
-        Sử dụng train_dataloader cho training data và valid_dataloader cho validation"""
+        """Train a neural network stored in self.network
+        Using train_dataloader for training data and
+        valid_dataloader for validation.
+
+        Parameters
+        ----------
+        X_train : np.ndarray
+            Train set
+        y_train : np.array
+            Train targets
+        eval_set : list of tuple
+            List of eval tuple set (X, y).
+            The last one is used for early stopping
+        eval_name : list of str
+            List of eval set names.
+        eval_metric : list of str
+            List of evaluation metrics.
+            The last metric is used for early stopping.
+        loss_fn : callable or None
+            a PyTorch loss function
+        weights : bool or dictionnary
+            0 for no balancing
+            1 for automated balancing
+            dict for custom weights per class
+        max_epochs : int
+            Maximum number of epochs during training
+        patience : int
+            Number of consecutive non improving epoch before early stopping
+        batch_size : int
+            Training batch size
+        vbs : int
+            Batch size for Ghost Batch Normalization (vbs < batch_size)
+        num_workers : int
+            Number of workers used in torch.utils.data.DataLoader
+        drop_last : bool
+            Whether to drop last batch during training
+        callbacks : list of callback function
+            List of custom callbacks
+        pin_memory: bool
+            Whether to set pin_memory to True or False during training
+        from_unsupervised: unsupervised trained model
+            Use a previously self supervised model as starting weights
+        warm_start: bool
+            If True, current model parameters are used to start training
+        """
+        # update model name
+
         self.max_epochs = max_epochs
         self.patience = patience
         self.batch_size = batch_size
@@ -134,10 +184,11 @@ class TabModel(BaseEstimator):
         self.inp_dim = X_train.shape[1]
         self._stop_training = False
         self.pin_memory = pin_memory and (self.device.type != "cpu")
-        #self.augmentations = augmentations
+        self.augmentations = augmentations
 
-        #if self.augmentations is not None:
-        #    self.augmentations._set_seed()
+        if self.augmentations is not None:
+            # This ensure reproducibility
+            self.augmentations._set_seed()
 
         eval_set = eval_set if eval_set else []
 
@@ -145,89 +196,112 @@ class TabModel(BaseEstimator):
             self.loss_fn = self._default_loss
         else:
             self.loss_fn = loss_fn
-        
-        check_input(X_train) #Kiểm tra tính hợp lệ của X_train
-        #check_warm_start(warm_start, from_unsupervised) #unsupervised, coi lai
 
-        #Update các siêu tham số
+        check_input(X_train)
+        check_warm_start(warm_start, from_unsupervised)
+
         self.update_fit_params(
             X_train,
             y_train,
             eval_set,
-            weights
+            weights,
         )
 
-        #Kiểm tra tính hợp lệ của eval_set dựa vào tập dữ liệu huấn luyện (train data)
+        # Validate and reformat eval set depending on training data
         eval_names, eval_set = validate_eval_set(eval_set, eval_name, X_train, y_train)
 
-        #Tạo dataloader cho train và eval set
         train_dataloader, valid_dataloaders = self._construct_loaders(
             X_train, y_train, eval_set
         )
 
-        #if from_unsupervised is not None:
-        #    self.__update__(**from_unsupervised.get_params())
+        if from_unsupervised is not None:
+            # Update parameters to match self pretraining
+            self.__update__(**from_unsupervised.get_params())
 
         if not hasattr(self, "network") or not warm_start:
+            # model has never been fitted before of warm_start is False
             self._set_network()
         self._update_network_params()
         self._set_metrics(eval_metric, eval_names)
         self._set_optimizer()
         self._set_callbacks(callbacks)
 
-        #if from_unsupervised is not None:
-        #    self.load_weights_from_unsupervised(from_unsupervised)
-        #    warnings.warn("Loading weights from unsupervised pretraining")
+        if from_unsupervised is not None:
+            self.load_weights_from_unsupervised(from_unsupervised)
+            warnings.warn("Loading weights from unsupervised pretraining")
+        # Call method on_train_begin for all callbacks
         self._callback_container.on_train_begin()
 
-        #Training qua các epochs
+        # Training loop over epochs
         for epoch_idx in range(self.max_epochs):
+
+            # Call method on_epoch_begin for all callbacks
             self._callback_container.on_epoch_begin(epoch_idx)
 
-            #Train 1 epoch trên train_dataloader
             self._train_epoch(train_dataloader)
 
-            #Dự đoán 1 epoch trên toàn bộ eval_set
-            for eval_name, valid_dataloader in zip(eval_names,valid_dataloaders):
+            # Apply predict epoch to all eval sets
+            for eval_name, valid_dataloader in zip(eval_names, valid_dataloaders):
                 self._predict_epoch(eval_name, valid_dataloader)
 
+            # Call method on_epoch_end for all callbacks
             self._callback_container.on_epoch_end(
-                epoch_idx, logs = self.history.epoch_metrics
+                epoch_idx, logs=self.history.epoch_metrics
             )
 
             if self._stop_training:
                 break
-        
+
+        # Call method on_train_end for all callbacks
         self._callback_container.on_train_end()
         self.network.eval()
 
-        #Tính toán tầm quan trọng của các đặc trưng trên toàn bộ dự đoán
+        # compute feature importance once the best model is defined
         self.feature_importances_ = self._compute_feature_importances(X_train)
-    
+
     def predict(self, X):
-        """Dự đoán trên 1 batch (valid), Dự đoán cho bài toán regression"""
+        """
+        Make predictions on a batch (valid)
+
+        Parameters
+        ----------
+        X : a :tensor: `torch.Tensor`
+            Input data
+
+        Returns
+        -------
+        predictions : np.array
+            Predictions of the regression problem
+        """
         self.network.eval()
         dataloader = DataLoader(
             PredictDataset(X),
-            batch_size = self.batch_size,
-            shuffle = False,
+            batch_size=self.batch_size,
+            shuffle=False,
         )
 
         results = []
-        #Duyệt qua từng batch và data ở từng batch
         for batch_nb, data in enumerate(dataloader):
             data = data.to(self.device).float()
-            output, M_loss = self.network(data) #Đưa ra output cho data ở từng batch
+            output, M_loss = self.network(data)
             predictions = output.cpu().detach().numpy()
-            results.append(predictions) #Nối output ở các batch lại với nhau
-        res = np.vstack(results) 
-        return self.predict_func(res) #Đưa ra dự đoán cuối cùng
-                                      #Đối với bài toán regression thì giữ nguyên output
-                                      #Đối với bài toán classification thì lấy nhãn có khả năng cao nhất
+            results.append(predictions)
+        res = np.vstack(results)
+        return self.predict_func(res)
 
     def explain(self, X, normalize=False):
         """
-        Trả về diễn giải cục bộ
+        Return local explanation
+
+        Parameters
+        ----------
+        X : tensor: `torch.Tensor`
+            Input data
+        normalize : bool (default False)
+            Wheter to normalize so that sum of features are equal to 1
+
+        Returns
+        -------
         M_explain : matrix
             Importance per sample, per columns.
         masks : matrix
@@ -243,7 +317,6 @@ class TabModel(BaseEstimator):
 
         res_explain = []
 
-        #Duyệt qua từng batch và data ở từng batch
         for batch_nb, data in enumerate(dataloader):
             data = data.to(self.device).float()
 
@@ -266,39 +339,42 @@ class TabModel(BaseEstimator):
         res_explain = np.vstack(res_explain)
 
         if normalize:
-            res_explain /= np.sum(res_explain, axis=1)[:, None] #Tính trung bình mức độ quan trọng của 
-                                                                #các đặc trưng qua các mask
+            res_explain /= np.sum(res_explain, axis=1)[:, None]
 
         return res_explain, res_masks
 
-    """def load_weights_from_unsupervised(self, unsupervised_model):
+    def load_weights_from_unsupervised(self, unsupervised_model):
         update_state_dict = copy.deepcopy(self.network.state_dict())
         for param, weights in unsupervised_model.network.state_dict().items():
             if param.startswith("encoder"):
                 # Convert encoder's layers name to match
                 new_param = "tabnet." + param
+    
             else:
                 new_param = param
             if self.network.state_dict().get(new_param) is not None:
                 # update only common layers
                 update_state_dict[new_param] = weights
 
-        self.network.load_state_dict(update_state_dict)"""
-    
+        self.network.load_state_dict(update_state_dict)
+
     def load_class_attrs(self, class_attrs):
         for attr_name, attr_value in class_attrs.items():
             setattr(self, attr_name, attr_value)
 
     def save_model(self, path):
         """Saving TabNet model in two distinct files.
+
         Parameters
         ----------
         path : str
             Path of the model.
+
         Returns
         -------
         str
             input filepath with ".zip" appended
+
         """
         saved_params = {}
         init_params = {}
@@ -331,6 +407,7 @@ class TabModel(BaseEstimator):
 
     def load_model(self, filepath):
         """Load TabNet model.
+
         Parameters
         ----------
         filepath : str
@@ -363,10 +440,11 @@ class TabModel(BaseEstimator):
         self.load_class_attrs(loaded_params["class_attrs"])
 
         return
-    
+
     def _train_epoch(self, train_loader):
         """
-        Train 1 epoch của mạng trong self.network
+        Trains one epoch of the network in self.network
+
         Parameters
         ----------
         train_loader : a :class: `torch.utils.data.Dataloader`
@@ -388,13 +466,15 @@ class TabModel(BaseEstimator):
 
     def _train_batch(self, X, y):
         """
-        Train 1 batch của dữ liệu
+        Trains one batch of data
+
         Parameters
         ----------
         X : torch.Tensor
             Train matrix
         y : torch.Tensor
             Target matrix
+
         Returns
         -------
         batch_outs : dict
@@ -407,8 +487,8 @@ class TabModel(BaseEstimator):
         X = X.to(self.device).float()
         y = y.to(self.device).float()
 
-        #if self.augmentations is not None:
-        #    X, y = self.augmentations(X, y)
+        if self.augmentations is not None:
+            X, y = self.augmentations(X, y)
 
         for param in self.network.parameters():
             param.grad = None
@@ -431,7 +511,8 @@ class TabModel(BaseEstimator):
 
     def _predict_epoch(self, name, loader):
         """
-        Dự đoán 1 epoch và cập nhật các số liệu.
+        Predict an epoch and update metrics.
+
         Parameters
         ----------
         name : str
@@ -460,11 +541,13 @@ class TabModel(BaseEstimator):
 
     def _predict_batch(self, X):
         """
-        Dự đoán 1 batch của dữ liệu
+        Predict one batch of data.
+
         Parameters
         ----------
         X : torch.Tensor
             Owned products
+
         Returns
         -------
         np.array
@@ -512,12 +595,14 @@ class TabModel(BaseEstimator):
 
     def _set_metrics(self, metrics, eval_names):
         """Set attributes relative to the metrics.
+
         Parameters
         ----------
         metrics : list of str
             List of eval metric names.
         eval_names : list of str
             List of eval set names.
+
         """
         metrics = metrics or [self._default_metric]
 
@@ -542,10 +627,12 @@ class TabModel(BaseEstimator):
 
     def _set_callbacks(self, custom_callbacks):
         """Setup the callbacks functions.
+
         Parameters
         ----------
         custom_callbacks : list of func
             List of callback functions.
+
         """
         # Setup default callbacks history, early stopping and scheduler
         callbacks = []
@@ -563,7 +650,7 @@ class TabModel(BaseEstimator):
         else:
             wrn_msg = "No early stopping will be performed, last training weights will be used."
             warnings.warn(wrn_msg)
-        
+
         if self.scheduler_fn is not None:
             # Add LR Scheduler call_back
             is_batch_level = self.scheduler_params.pop("is_batch_level", False)
@@ -588,7 +675,8 @@ class TabModel(BaseEstimator):
         )
 
     def _construct_loaders(self, X_train, y_train, eval_set):
-        """Tạo dataloaders cho train và eval set.
+        """Generate dataloaders for train and eval set.
+
         Parameters
         ----------
         X_train : np.array
@@ -597,19 +685,21 @@ class TabModel(BaseEstimator):
             Train targets.
         eval_set : list of tuple
             List of eval tuple set (X, y).
+
         Returns
         -------
         train_dataloader : `torch.utils.data.Dataloader`
             Training dataloader.
         valid_dataloaders : list of `torch.utils.data.Dataloader`
             List of validation dataloaders.
+
         """
-        y_train_mapped = self.prepare_target(y_train) #Chuyển y_train thành ma trận số
+        # all weights are not allowed for this type of model
+        y_train_mapped = self.prepare_target(y_train)
         for i, (X, y) in enumerate(eval_set):
             y_mapped = self.prepare_target(y)
             eval_set[i] = (X, y_mapped)
 
-        #Tạo train và valid dataloader
         train_dataloader, valid_dataloaders = create_dataloaders(
             X_train,
             y_train_mapped,
@@ -622,26 +712,80 @@ class TabModel(BaseEstimator):
         )
         return train_dataloader, valid_dataloaders
 
-    #Tính toán tầm quan trọng của các đặc trưng trên toàn mô hình
     def _compute_feature_importances(self, X):
-        M_explain, _ = self.explain(X, normalize = False)
-        sum_explain = M_explain.sum(axis = 0)
-        feature_importances_ = sum_explain/np.sum(sum_explain) #Trung bình của tổng tầm quan trọng của 
-                                                               #từng đặc trưng trên toàn bộ các mẫu
+        """Compute global feature importance.
+
+        Parameters
+        ----------
+        loader : `torch.utils.data.Dataloader`
+            Pytorch dataloader.
+
+        """
+        M_explain, _ = self.explain(X, normalize=False)
+        sum_explain = M_explain.sum(axis=0)
+        feature_importances_ = sum_explain / np.sum(sum_explain)
         return feature_importances_
-    
+
     def _update_network_params(self):
         self.network.vbs = self.vbs
-    
-    #Những abstractmethod là những hàm cần phải được xác định trước khi sử dụng abstract_model.py
+
     @abstractmethod
     def update_fit_params(self, X_train, y_train, eval_set, weights):
-        raise NotImplementedError("must define update_fit_params")
+        """
+        Set attributes relative to fit function.
+
+        Parameters
+        ----------
+        X_train : np.ndarray
+            Train set
+        y_train : np.array
+            Train targets
+        eval_set : list of tuple
+            List of eval tuple set (X, y).
+        weights : bool or dictionnary
+            0 for no balancing
+            1 for automated balancing
+        """
+        raise NotImplementedError(
+            "users must define update_fit_params to use this base class"
+        )
 
     @abstractmethod
     def compute_loss(self, y_score, y_true):
-        raise NotImplementedError("must define compute_loss")
-    
+        """
+        Compute the loss.
+
+        Parameters
+        ----------
+        y_score : a :tensor: `torch.Tensor`
+            Score matrix
+        y_true : a :tensor: `torch.Tensor`
+            Target matrix
+
+        Returns
+        -------
+        float
+            Loss value
+        """
+        raise NotImplementedError(
+            "users must define compute_loss to use this base class"
+        )
+
     @abstractmethod
     def prepare_target(self, y):
-        raise NotImplementedError("must define prepare_target")
+        """
+        Prepare target before training.
+
+        Parameters
+        ----------
+        y : a :tensor: `torch.Tensor`
+            Target matrix.
+
+        Returns
+        -------
+        `torch.Tensor`
+            Converted target matrix.
+        """
+        raise NotImplementedError(
+            "users must define prepare_target to use this base class"
+        )
