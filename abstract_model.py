@@ -173,7 +173,7 @@ class TabModel(BaseEstimator):
         self._update_network_params()
         self._set_metrics(eval_metric, eval_names)
         self._set_optimizer()
-        self._callbacks(callbacks)
+        self._set_callbacks(callbacks)
 
         #if from_unsupervised is not None:
         #    self.load_weights_from_unsupervised(from_unsupervised)
