@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import torch.nn.functional as F
 from torch.autograd import Function
 
 
@@ -28,7 +27,7 @@ class SparsemaxFunction(Function): #sparsemax activation
         ctx.dim = dim
         max_val, _ = input.max (dim = dim, keepdim = True)
         input -= max_val
-        tau, supp_size = SparemaxFunction.threshold_and_support(input, dim = dim)
+        tau, supp_size = SparsemaxFunction.threshold_and_support(input, dim = dim)
         output = torch.clamp(input - tau, min = 0)
         ctx.save_for_backward(supp_size, output)
         return output
