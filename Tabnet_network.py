@@ -502,7 +502,7 @@ class EmbeddingGenerator(torch.nn.Module):
 
 class TabNetNoEmbeddings(nn.Module):
     def __init__(self, inp_dim, out_dim, n_d = 8, n_a = 8, n_steps = 3, 
-                gamma = 1.3, n_ind = 2, n_shared = 2, epsilon=1e-15, vbs = 128, momentum = 0.02):
+                gamma = 1.3, n_ind = 2, n_shared = 2, epsilon=1e-15, vbs = 128, momentum = 0.02,):
 
         super(TabNetNoEmbeddings, self).__init__()
         self.inp_dim = inp_dim
@@ -560,7 +560,7 @@ class TabNetNoEmbeddings(nn.Module):
 
 class TabNet(torch.nn.Module):
     def __init__(self, inp_dim, out_dim, n_d = 8, n_a = 8, n_steps = 3, gamma = 1.3,
-                cat_idxs = [], cat_dims = [], cat_emb_dim = 1, n_ind = 2, n_shared = 2, epsilon=1e-15, vbs = 128,momentum=0.02,):
+                cat_idxs = [], cat_dims = [], cat_emb_dim = 1, n_ind = 2, n_shared = 2, epsilon=1e-15, vbs = 128, momentum=0.02,):
         super(TabNet, self).__init__()
         self.cat_idxs = cat_idxs or []
         self.cat_dims = cat_dims or []
