@@ -204,7 +204,7 @@ class LRSchedulerCallback(Callback): #Kiểm soát tốc độ học tập (ki�
                                      #kiểm soát tốc độ mô hình thay đổi các trọng số để phù hợp với bài toán
     scheduler_fn = Any
     optimizer: Any
-    Scheduler_params: dict
+    scheduler_params: dict
     early_stopping_metric: str
     is_batch_level: bool = False 
 
@@ -213,7 +213,7 @@ class LRSchedulerCallback(Callback): #Kiểm soát tốc độ học tập (ki�
     ):
 
         self.is_metric_related = hasattr(self.scheduler_fn, "is_better")
-        self.scheduler = self.scheduler_fn(self.optimizer, **self.Scheduler_params)
+        self.scheduler = self.scheduler_fn(self.optimizer, **self.scheduler_params)
         super().__init__()
 
     def on_batch_end(self, batch, logs = None):
