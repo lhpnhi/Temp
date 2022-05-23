@@ -202,7 +202,7 @@ class History(Callback): #Ghi lại các sự kiện (các thay đổi) vào His
 @dataclass
 class LRSchedulerCallback(Callback): #Kiểm soát tốc độ học tập (kiểu như learning rate),
                                      #kiểm soát tốc độ mô hình thay đổi các trọng số để phù hợp với bài toán
-    scheduler_fn = Any
+    scheduler_fn: Any
     optimizer: Any
     scheduler_params: dict
     early_stopping_metric: str
